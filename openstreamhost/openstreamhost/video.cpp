@@ -303,8 +303,8 @@ encoder_t amfenc {
         { "rc"s, "vbr_peak"s },
         { "usage"s, "ultralowlatency"s },
         { "quality"s, "speed"s },
-        { "max_qp_i", "35"s },
-        { "max_qp_p", "35"s }
+        { "max_qp_i", "35"s },      // TBD: consider to move it out of there or make it configurable. Removal will lead to quality degradation.
+        { "max_qp_p", "35"s }       // TBD: consider to move it out of there or make it configurable. Removal will lead to quality degradation.
     },
     std::nullopt,  std::make_optional<encoder_t::option_t>("qp"s, &config::video.qp),
     "hevc_amf"s,
@@ -776,19 +776,21 @@ void encode_run(
       frame_nr = end;
       key_frame_nr = end + config.framerate;
     }
-    else if(frame_nr == key_frame_nr) {
-      session->frame->pict_type = AV_PICTURE_TYPE_I;
-    }
+//    // AV_PICTURE_TYPE_I will trigger keyframe on patched hevc, let's avoid extra keyframes
+//    else if(frame_nr == key_frame_nr) {
+//      session->frame->pict_type = AV_PICTURE_TYPE_I;
+//    }
 
     std::this_thread::sleep_until(next_frame);
     next_frame += delay;
 
     // When Moonlight request an IDR frame, send frames even if there is no new captured frame
-    if(frame_nr > (key_frame_nr + config.framerate) || images->peek()) {
-      if(auto img = images->pop(delay)) {
-        session->device->convert(*img);
-
-        encoder.img_to_frame(*session->device->img, session->frame);
+    // leave only images->peek()
+    // if(frame_nr > (key_frame_nr + config.framerate) || images->peek())
+    if(images->peek()) {
+      if(auto img = images->pop(delay)) { // NOTE: there will be no streaming if pop isn't called
+        session->device->convert(*img);   // NOTE: removal of this line result is green screen on hevc
+        encoder.img_to_frame(*session->device->img, session->frame); // NOTE: sw_img_to_frame is not implemented for hevc, can be removed without harm
       }
       else if(images->running()) {
         continue;
@@ -924,9 +926,10 @@ encode_e encode_run_sync(std::vector<std::unique_ptr<sync_session_ctx_t>> &synce
         ctx->frame_nr = end;
         ctx->key_frame_nr = end + ctx->config.framerate;
       }
-      else if(ctx->frame_nr == ctx->key_frame_nr) {
-        pos->session.frame->pict_type = AV_PICTURE_TYPE_I;
-      }
+//      // AV_PICTURE_TYPE_I will trigger keyframe on patched hevc, let's avoid extra keyframes
+//      else if(ctx->frame_nr == ctx->key_frame_nr) {
+//        pos->session.frame->pict_type = AV_PICTURE_TYPE_I;
+//      }
 
       if(img_tmp) {
         pos->img_tmp = img_tmp;
@@ -943,7 +946,6 @@ encode_e encode_run_sync(std::vector<std::unique_ptr<sync_session_ctx_t>> &synce
         ++pos;
         continue;
       }
-
       if(pos->img_tmp) {
         if(pos->hwdevice->convert(*pos->img_tmp)) {
           BOOST_LOG(error) << "Could not convert image"sv;
